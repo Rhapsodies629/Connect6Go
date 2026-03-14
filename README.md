@@ -1,5 +1,5 @@
 # Connect6Go
-A boardgame that combines the rules of connect5 and Go.
+A boardgame that combines the rules of Connect5 and Go.
 
 ## 游戏规则：
 胜利条件：率先在任何方向（横竖斜）连成6颗同色棋子。\
