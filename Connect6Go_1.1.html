@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>六子围棋 - 在线对战版</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; display: flex; flex-direction: column; align-items: center; background-color: #e9ecef; margin: 0; padding: 20px; }
+        .container { display: flex; flex-direction: column; align-items: center; max-width: 600px; }
+        h1 { color: #2c3e50; margin-bottom: 10px; }
+        
+        /* 连接面板 */
+        .panel { background: white; padding: 15px; border-radius: 10px; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 100%; box-sizing: border-box; }
+        .id-text { background: #f8f9fa; padding: 5px 10px; border-radius: 4px; font-family: monospace; font-weight: bold; color: #e83e8c; }
+        
+        /* 游戏状态 */
+        .status { font-size: 1.1rem; font-weight: bold; margin: 10px 0; color: #34495e; min-height: 24px; }
+        
+        /* 规则说明区 */
+        .rules-box { background: #fff3cd; border: 1px solid #ffeeba; color: #856404; padding: 12px; border-radius: 8px; font-size: 0.85rem; margin-bottom: 15px; line-height: 1.6; }
+        .rules-box h3 { margin: 0 0 5px 0; font-size: 1rem; border-bottom: 1px dashed #ffeeba; }
+        .rules-box ul { margin: 5px 0 0 0; padding-left: 18px; }
+
+        /* 棋盘 */
+        #board { background-color: #DEB887; border: 2px solid #8B4513; border-radius: 4px; box-shadow: 0 8px 20px rgba(0,0,0,0.2); cursor: crosshair; }
+        
+        /* 按钮与输入 */
+        .controls { display: flex; gap: 8px; margin-top: 10px; width: 100%; }
+        input { flex-grow: 1; padding: 8px; border: 1px solid #ced4da; border-radius: 4px; }
+        .btn { padding: 8px 16px; cursor: pointer; border: none; border-radius: 4px; transition: 0.2s; font-weight: bold; }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-primary:hover { background: #0069d9; }
+        .btn-reset { background: #28a745; color: white; display: none; margin-bottom: 10px; width: 100%; }
+        .btn-reset:hover { background: #218838; }
+        .btn:disabled { background: #6c757d; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>六子围棋 ⚔️</h1>
+
+    <div class="rules-box">
+        <h3>📖 简单规则：</h3>
+        <ul>
+            <li><strong>胜利：</strong> 任何方向（横竖斜）率先连成 <b>6 颗</b>同色棋子。</li>
+            <li><strong>气：</strong> 棋子旁边的空位。没有“气”的棋块会被立即从棋盘<b>提掉</b>。</li>
+            <li><strong>禁手：</strong> 不能下在没有气且不能吃掉对方的位置（禁止自杀）。</li>
+            <li><strong>劫争：</strong> 如果你的落子会导致棋盘状态瞬间回到上一回合，则被禁止。</li>
+        </ul>
+    </div>
+
+    <div class="panel">
+        <div>我的 ID: <span id="my-id" class="id-text">获取中...</span></div>
+        <div class="controls">
+            <input type="text" id="peer-id-input" placeholder="粘贴同学的 ID">
+            <button class="btn btn-primary" id="connect-btn">呼叫同学</button>
+        </div>
+        <div id="conn-status" style="font-size: 0.8rem; margin-top:5px; color:#6c757d;">状态：离线</div>
+    </div>
+
+    <button class="btn btn-reset" id="reset-btn" onclick="requestReset()">本局结束，再来一局！</button>
+    <div class="status" id="statusText">等待连接开始游戏...</div>
+    <canvas id="board" width="570" height="570"></canvas>
+</div>
+
+<script>
+    const canvas = document.getElementById('board');
+    const ctx = canvas.getContext('2d');
+    const BOARD_SIZE = 19;
+    const CELL_SIZE = 30;
+    const MARGIN = 15;
+
+    let board = [];
+    let currentPlayer = 1; // 1:黑, 2:白
+    let myColor = null;    
+    let gameOver = false;
+    let prevBoardStr = null;
+    let currBoardStr = null;
+
+    let peer = new Peer(); 
+    let conn = null;
+
+    peer.on('open', (id) => { document.getElementById('my-id').innerText = id; });
+
+    peer.on('connection', (c) => {
+        if (conn) return; 
+        conn = c;
+        myColor = 1; 
+        setupConn();
+        document.getElementById('statusText').innerText = "连接成功！你执黑先手";
+        initBoard();
+    });
+
+    document.getElementById('connect-btn').onclick = () => {
+        const peerId = document.getElementById('peer-id-input').value;
+        if (!peerId) return;
+        conn = peer.connect(peerId);
+        myColor = 2; 
+        setupConn();
+        document.getElementById('statusText').innerText = "连接成功！你执白后手";
+        initBoard();
+    };
+
+    function setupConn() {
+        document.getElementById('conn-status').innerText = "状态：已连接对话中";
+        document.getElementById('connect-btn').disabled = true;
+        conn.on('data', (data) => {
+            if (data.type === 'move') executeMove(data.x, data.y, false);
+            else if (data.type === 'reset') applyReset(data.newColor);
+        });
+    }
+
+    function requestReset() {
+        if (!conn) return;
+        const myNewColor = (myColor === 1 ? 2 : 1);
+        conn.send({ type: 'reset', newColor: myColor }); // 对方变我现在的颜色
+        applyReset(myNewColor);
+    }
+
+    function applyReset(newColor) {
+        myColor = newColor;
+        initBoard();
+        gameOver = false;
+        currentPlayer = 1; 
+        document.getElementById('reset-btn').style.display = 'none';
+        updateTurnText();
+    }
+
+    function initBoard() {
+        board = Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0));
+        currBoardStr = JSON.stringify(board);
+        prevBoardStr = null;
+        drawBoard();
+    }
+
+    function drawBoard() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // 线条
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 1;
+        for (let i = 0; i < BOARD_SIZE; i++) {
+            ctx.beginPath(); ctx.moveTo(MARGIN, MARGIN + i * CELL_SIZE); ctx.lineTo(MARGIN + 540, MARGIN + i * CELL_SIZE); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(MARGIN + i * CELL_SIZE, MARGIN); ctx.lineTo(MARGIN + i * CELL_SIZE, 540 + MARGIN); ctx.stroke();
+        }
+
+        // 九个星位
+        const stars = [3, 9, 15];
+        ctx.fillStyle = '#333';
+        stars.forEach(x => stars.forEach(y => {
+            ctx.beginPath(); ctx.arc(MARGIN + x*CELL_SIZE, MARGIN + y*CELL_SIZE, 3, 0, 7); ctx.fill();
+        }));
+
+        for (let y = 0; y < BOARD_SIZE; y++) {
+            for (let x = 0; x < BOARD_SIZE; x++) {
+                if (board[y][x]) drawStone(x, y, board[y][x]);
+            }
+        }
+    }
+
+    function drawStone(x, y, color) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(MARGIN + x * CELL_SIZE, MARGIN + y * CELL_SIZE, 13, 0, Math.PI * 2);
+        
+        const grad = ctx.createRadialGradient(MARGIN + x*CELL_SIZE-3, MARGIN + y*CELL_SIZE-3, 2, MARGIN + x*CELL_SIZE, MARGIN + y*CELL_SIZE, 13);
+        if (color === 1) {
+            grad.addColorStop(0, '#555'); grad.addColorStop(1, '#000');
+        } else {
+            grad.addColorStop(0, '#fff'); grad.addColorStop(1, '#ddd');
+        }
+        
+        ctx.fillStyle = grad;
+        ctx.shadowBlur = 3; ctx.shadowColor = "rgba(0,0,0,0.4)";
+        ctx.shadowOffsetY = 2;
+        ctx.fill();
+        ctx.strokeStyle = (color === 1) ? "#000" : "#ccc";
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    function getGroup(startX, startY, player, checkBoard) {
+        let stones = [], liberties = new Set(), visited = Array(BOARD_SIZE).fill(0).map(()=>Array(BOARD_SIZE).fill(false));
+        let queue = [{x: startX, y: startY}]; visited[startY][startX] = true;
+        while(queue.length > 0) {
+            let c = queue.shift(); stones.push(c);
+            [[0,1],[1,0],[0,-1],[-1,0]].forEach(([dx, dy])=>{
+                let nx = c.x+dx, ny = c.y+dy;
+                if(nx>=0 && nx<BOARD_SIZE && ny>=0 && ny<BOARD_SIZE) {
+                    if(checkBoard[ny][nx] === 0) liberties.add(`${nx},${ny}`);
+                    else if(checkBoard[ny][nx] === player && !visited[ny][nx]) {
+                        visited[ny][nx] = true; queue.push({x:nx, y:ny});
+                    }
+                }
+            });
+        }
+        return { stones, libs: liberties.size };
+    }
+
+    function executeMove(x, y, isLocal) {
+        if (gameOver || board[y][x] !== 0) return;
+        
+        let tempBoard = board.map(r => [...r]);
+        tempBoard[y][x] = currentPlayer;
+        let opp = currentPlayer === 1 ? 2 : 1;
+        let captured = 0;
+
+        [[0,1],[1,0],[0,-1],[-1,0]].forEach(([dx, dy]) => {
+            let nx = x+dx, ny = y+dy;
+            if(nx>=0 && nx<BOARD_SIZE && ny>=0 && ny<BOARD_SIZE && tempBoard[ny][nx] === opp) {
+                let g = getGroup(nx, ny, opp, tempBoard);
+                if(g.libs === 0) { g.stones.forEach(s => tempBoard[s.y][s.x] = 0); captured++; }
+            }
+        });
+
+        let myG = getGroup(x, y, currentPlayer, tempBoard);
+        if(myG.libs === 0 && captured === 0) {
+            if(isLocal) alert("这里没气了，是禁入点（自杀位）！");
+            return;
+        }
+
+        let nextStr = JSON.stringify(tempBoard);
+        if(prevBoardStr && nextStr === prevBoardStr) {
+            if(isLocal) alert("触发劫争：不能立即提回，请先下一手别处。");
+            return;
+        }
+
+        prevBoardStr = currBoardStr;
+        currBoardStr = nextStr;
+        board = tempBoard;
+        drawBoard();
+
+        if (checkWin(currentPlayer)) {
+            gameOver = true;
+            document.getElementById('statusText').innerText = (currentPlayer === 1 ? "黑棋" : "白棋") + " 达成了六连，获胜！";
+            document.getElementById('reset-btn').style.display = 'block';
+        } else {
+            currentPlayer = opp;
+            updateTurnText();
+        }
+
+        if (isLocal && conn) conn.send({ type: 'move', x: x, y: y });
+    }
+
+    function checkWin(p) {
+        const dirs = [[1,0],[0,1],[1,1],[1,-1]];
+        for(let y=0; y<BOARD_SIZE; y++) {
+            for(let x=0; x<BOARD_SIZE; x++) {
+                if(board[y][x] !== p) continue;
+                for(let [dx,dy] of dirs) {
+                    let c=1;
+                    for(let s=1; s<6; s++) {
+                        let nx=x+dx*s, ny=y+dy*s;
+                        if(nx>=0 && nx<BOARD_SIZE && ny>=0 && ny<BOARD_SIZE && board[ny][nx]===p) c++;
+                        else break;
+                    }
+                    if(c>=6) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    function updateTurnText() {
+        const isMyTurn = (currentPlayer === myColor);
+        const myName = (myColor === 1 ? "黑" : "白");
+        const turnName = (currentPlayer === 1 ? "黑" : "白");
+        document.getElementById('statusText').style.color = isMyTurn ? "#d9534f" : "#34495e";
+        document.getElementById('statusText').innerText = `你是【${myName}】，轮到：${turnName}棋 ${isMyTurn ? "(你的回合)" : "(等待中...)"}`;
+    }
+
+    canvas.addEventListener('click', (e) => {
+        if (!conn || myColor !== currentPlayer || gameOver) return;
+        const rect = canvas.getBoundingClientRect();
+        const x = Math.round((e.clientX - rect.left - MARGIN) / CELL_SIZE);
+        const y = Math.round((e.clientY - rect.top - MARGIN) / CELL_SIZE);
+        if(x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE) executeMove(x, y, true);
+    });
+</script>
+</body>
+</html>
