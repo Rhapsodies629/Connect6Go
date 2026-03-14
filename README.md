@@ -10,3 +10,4 @@ A boardgame that combines the rules of Connect5 and Go.
 悔棋：需对方同意后方可回滚至上一回合。
 
 ### 和好友同时下载html文件到本地并在浏览器中打开，输入ID连接成功后即可开玩！
+### 在对局者都就位后，输入ID可进入观战模式！
