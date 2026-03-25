@@ -10,3 +10,5 @@ A boardgame that combines the rules of Connect5 and Go.
 
 ### 采用PeerJS的P2P连接模式，和好友同时下载html文件到本地并在浏览器中打开，输入ID连接成功后即可开玩！（如果双方物理距离太远可能连接失败）
 ### 在对局者都就位后，输入ID可进入观战模式！
+
+### 现已支持网页版！链接：https://rhapsodies629.github.io/Connect6Go/
